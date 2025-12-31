@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Crush</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    
+    let width, height;
+    function resize() {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const PARTICLE_COUNT = 8500;
+    const SCALE = 17;
+    const MAX_OUTWARD_PX = 50; 
+    const MAX_INWARD_PX = 150;  
+
+    function createParticleImage() {
+        const pCanvas = document.createElement('canvas');
+        pCanvas.width = 8;
+        pCanvas.height = 8;
+        const pCtx = pCanvas.getContext('2d');
+        const gradient = pCtx.createRadialGradient(4, 4, 0, 4, 4, 4);
+        gradient.addColorStop(0, 'rgba(222, 26, 88, 0.9)'); 
+        gradient.addColorStop(0.3, 'rgba(222, 26, 88, 0.8)');
+        gradient.addColorStop(1, 'rgba(222, 26, 88, 0)');
+        pCtx.fillStyle = gradient;
+        pCtx.fillRect(0, 0, 8, 8);
+        return pCanvas;
+    }
+    const particleImg = createParticleImage();
+
+    function getHeartPoint(t) {
+        const x = 16 * Math.pow(Math.sin(t), 3);
+        const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+        return { x, y };
+    }
+
+    const particles = new Float32Array(PARTICLE_COUNT * 6); 
+
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const i6 = i * 6;
+        
+        particles[i6] = Math.random() * width;     
+        particles[i6 + 1] = Math.random() * height; 
+
+        const t = Math.random() * Math.PI * 2;
+        const p = getHeartPoint(t);
+        
+        let r;
+        const rand = Math.random();
+
+        if (rand < 0.45) {
+            const vibration = (Math.random() - 0.5) * (MAX_OUTWARD_PX / (SCALE * 10)); 
+            r = 1.0 + vibration; 
+        } else {
+
+            let depth = MAX_INWARD_PX / (SCALE * 12);
+            if (depth > 0.9) depth = 0.9;
+            
+            const distributionCurve = 1 - Math.pow(Math.random(), 3); 
+            
+            r = (1 - depth) + (distributionCurve * depth); 
+        }
+
+        particles[i6 + 2] = p.x * SCALE * r; 
+        particles[i6 + 3] = p.y * SCALE * r; 
+        
+        particles[i6 + 4] = 0.1 + (r * 0.02) + Math.random() * 0.02; // friction
+        particles[i6 + 5] = Math.random() * Math.PI * 2;
+    }
+
+    let time = 0;
+    
+    function animate() {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.25)'; 
+        ctx.fillRect(0, 0, width, height);
+        
+        ctx.globalCompositeOperation = 'lighter';
+
+        time += 0.015;
+        let cycle = time % 1.2; 
+        
+        let beat1 = Math.exp(-Math.pow(cycle - 0.2, 2) * 50);
+        let beat2 = Math.exp(-Math.pow(cycle - 0.5, 2) * 50);
+
+        let breathing = Math.sin(time * 3) * 0.05; 
+
+        let beatScale = 0.9 + breathing + (beat1 * 0.45 + beat2 * 0.4);
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const i6 = i * 6;
+            
+            let x = particles[i6];
+            let y = particles[i6 + 1];
+            const baseX = particles[i6 + 2];
+            const baseY = particles[i6 + 3];
+            const friction = particles[i6 + 4];
+            const phase = particles[i6 + 5];
+
+            const driftX = Math.cos(time + phase) * 3; 
+            const driftY = Math.sin(time * 0.8 + phase) * 3;
+
+            const targetX = width / 2 + (baseX + driftX) * beatScale;
+            const targetY = height / 2 + (baseY + driftY) * beatScale;
+
+            x += (targetX - x) * friction;
+            y += (targetY - y) * friction;
+
+            particles[i6] = x;
+            particles[i6 + 1] = y;
+
+            const sparkle = 1 + 0.4 * Math.sin(time * 3 + phase); 
+            const size = (baseX > 100) ? 3.5 * sparkle : 2.5 * sparkle; 
+            
+            ctx.drawImage(particleImg, x | 0, y | 0, size, size);
+        }
+
+        ctx.globalCompositeOperation = 'source-over';
+        requestAnimationFrame(animate);
+    }
+
+    animate();
+</script>
+
+</body>
+</html>
