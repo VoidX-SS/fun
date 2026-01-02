@@ -2,209 +2,603 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Neon Comet Stargazing</title>
+    <title>Heartbreak Cinematic: Storm Edition V2</title>
     <style>
         body {
             margin: 0;
             overflow: hidden;
-            background: radial-gradient(circle at bottom, #0b1026 0%, #000000 100%); /* Bầu trời đêm có chiều sâu */
+            background-color: #050505;
         }
         canvas {
             display: block;
+        }
+        #text-overlay {
+            position: absolute;
+            bottom: 15%;
+            width: 100%;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.8);
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 16px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 1.5s;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+            z-index: 10;
         }
     </style>
 </head>
 <body>
 
+<div id="text-overlay"></div>
 <canvas id="canvas"></canvas>
 
 <script>
+    /**
+     * HEARTBREAK CINEMATIC - STORM EDITION V2
+     * 1. Static Dark Background (until storm starts).
+     * 2. First Hunter hit triggers Rain.
+     * 3. Ambient Comets stop on first hit.
+     * 4. Stars disappear when storm starts.
+     * 5. IMPACT LIGHTNING: Every hit triggers a lightning bolt.
+     */
+    const CONFIG = {
+        // --- Core Settings ---
+        PARTICLE_COUNT: 10000,
+        HEART_SCALE: 15,
+        HEART_COLOR: 'rgba(222, 26, 88, A)', 
+        WHITE_COLOR: 'rgba(255, 255, 255, A)',
+        
+        // --- Barrage Settings ---
+        BARRAGE_COUNT: 15,
+        BARRAGE_START_DELAY: 4000, 
+        BARRAGE_INTERVAL: 600,
+        IMPACT_RADIUS: 35,
+        IMPACT_FORCE: 50,
+
+        // --- Finisher Settings ---
+        FINISHER_DELAY: 16000,
+        FINISHER_FORCE: 700,
+        
+        // --- Visuals ---
+        SHOW_SHOCKWAVES: true,
+        SHOCKWAVE_VISUAL_SMALL: 0, 
+        SHOCKWAVE_VISUAL_BIG: 1500,
+        SHAKE_MULTIPLIER: 2,
+        
+        // --- Snippet Specifics ---
+        MAX_OUTWARD_PX: 50,
+        MAX_INWARD_PX: 150
+    };
+
     const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const textOverlay = document.getElementById('text-overlay');
     
-    let width, height;
+    let width, height, cx, cy;
     function resize() {
         width = canvas.width = window.innerWidth;
         height = canvas.height = window.innerHeight;
+        cx = width / 2;
+        cy = height / 2;
     }
     window.addEventListener('resize', resize);
     resize();
 
-    // --- CẤU HÌNH ---
-    const STAR_COUNT = 300;      // Số lượng ngôi sao nền
-    const COMET_COUNT = 5;       // Số lượng sao chổi xuất hiện cùng lúc
-    const COMET_SPEED_MIN = 3;
-    const COMET_SPEED_MAX = 30;
-    const TRAIL_LENGTH = 40;     // Độ dài đuôi sao chổi
-
-    function random(min, max) {
-        return Math.random() * (max - min) + min;
+    // --- ASSETS ---
+    function createParticleImage(color) {
+        const pCanvas = document.createElement('canvas');
+        pCanvas.width = 8;
+        pCanvas.height = 8;
+        const pCtx = pCanvas.getContext('2d');
+        const gradient = pCtx.createRadialGradient(4, 4, 0, 4, 4, 4);
+        gradient.addColorStop(0, color.replace('A', '0.9')); 
+        gradient.addColorStop(0.3, color.replace('A', '0.8'));
+        gradient.addColorStop(1, color.replace('A', '0'));
+        pCtx.fillStyle = gradient;
+        pCtx.fillRect(0, 0, 8, 8);
+        return pCanvas;
     }
 
-    // --- CLASS 1: NGÔI SAO NỀN (Lấp lánh) ---
+    const imgLive = createParticleImage(CONFIG.HEART_COLOR);
+    const imgWhite = createParticleImage(CONFIG.WHITE_COLOR);
+
+    // --- STATE MANAGEMENT ---
+    const STATE = {
+        phase: 1,           // 1: Alive, 2: Dying, 3: Shattered
+        shake: 0,
+        flash: 0,
+        cometsActive: true,
+        isStormy: false     // Triggers rain
+    };
+
+    // --- PARTICLES ---
+    const particles = new Float32Array(CONFIG.PARTICLE_COUNT * 10);
+
+    function getHeartPoint(t) {
+        const x = 16 * Math.pow(Math.sin(t), 3);
+        const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+        return { x, y };
+    }
+
+    function initHeart() {
+        for (let i = 0; i < CONFIG.PARTICLE_COUNT; i++) {
+            const idx = i * 10;
+            
+            particles[idx] = Math.random() * width;      
+            particles[idx + 1] = Math.random() * height; 
+
+            const t = Math.random() * Math.PI * 2;
+            const p = getHeartPoint(t);
+            
+            let r;
+            const rand = Math.random();
+            if (rand < 0.45) {
+                const vibration = (Math.random() - 0.5) * (CONFIG.MAX_OUTWARD_PX / (CONFIG.HEART_SCALE * 10)); 
+                r = 1.0 + vibration; 
+            } else {
+                let depth = CONFIG.MAX_INWARD_PX / (CONFIG.HEART_SCALE * 12);
+                if (depth > 0.9) depth = 0.9;
+                const distributionCurve = 1 - Math.pow(Math.random(), 3); 
+                r = (1 - depth) + (distributionCurve * depth); 
+            }
+
+            particles[idx + 2] = p.x * CONFIG.HEART_SCALE * r; 
+            particles[idx + 3] = p.y * CONFIG.HEART_SCALE * r; 
+            particles[idx + 4] = 0.1 + (r * 0.02) + Math.random() * 0.02; 
+            particles[idx + 5] = Math.random() * Math.PI * 2; 
+            
+            particles[idx + 6] = 0; 
+            particles[idx + 7] = 0; 
+            particles[idx + 8] = 0; 
+            particles[idx + 9] = (particles[idx + 2] > 100) ? 3.5 : 2.5; 
+        }
+    }
+
+    // --- ENTITIES ---
+    const stars = [];
+    const comets = [];
+    const shockwaves = [];
+    const rain = [];
+    let lightningOpacity = 0;
+    let lightningBolt = null; 
+
     class Star {
         constructor() {
-            this.x = random(0, width);
-            this.y = random(0, height);
-            this.size = random(0.5, 2);
-            this.baseAlpha = random(0.3, 0.8); // Độ sáng gốc
-            this.twinkleSpeed = random(0.02, 0.05);
-            this.angle = random(0, Math.PI * 2);
+            this.x = Math.random() * width;
+            this.y = Math.random() * height;
+            this.size = Math.random() * 1.5;
+            this.alpha = Math.random();
+            this.blinkSpd = 0.01 + Math.random() * 0.05;
         }
-
-        update() {
-            // Hiệu ứng lấp lánh (Sine wave)
-            this.angle += this.twinkleSpeed;
-            // Độ sáng dao động xung quanh mức gốc
-            this.alpha = this.baseAlpha + Math.sin(this.angle) * 0.2;
-            if (this.alpha < 0) this.alpha = 0;
+        update() { 
+            this.alpha += Math.sin(Date.now() * this.blinkSpd * 0.05) * 0.02; 
         }
-
-        draw() {
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-            ctx.fillStyle = `rgba(255, 255, 255, ${this.alpha})`;
-            ctx.fill();
+        draw(ctx) {
+            let visibility = STATE.isStormy ? 0 : 1;
+            if (visibility > 0) {
+                 ctx.fillStyle = `rgba(255, 255, 255, ${Math.abs(this.alpha) * visibility})`;
+                 ctx.beginPath(); ctx.arc(this.x | 0, this.y | 0, this.size, 0, Math.PI*2); ctx.fill();
+            }
         }
     }
 
-    // --- CLASS 2: SAO CHỔI NEON (Nhân vật chính) ---
-    class Comet {
+    class RainDrop {
         constructor() {
-            this.reset();
+            this.x = Math.random() * width;
+            this.y = Math.random() * -height; 
+            this.speed = 15 + Math.random() * 15; 
+            this.length = 15 + Math.random() * 10;
+            this.wind = -2 + Math.random() * 4; 
         }
+        update() {
+            this.y += this.speed;
+            this.x += this.wind;
+            if (this.y > height) {
+                this.y = -20;
+                this.x = Math.random() * width;
+            }
+        }
+        draw(ctx) {
+            ctx.beginPath();
+            ctx.moveTo(this.x, this.y);
+            ctx.lineTo(this.x + this.wind, this.y + this.length);
+            ctx.strokeStyle = `rgba(180, 200, 255, 0.3)`;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+    }
 
-        reset() {
-            // Xuất phát từ ngoài màn hình (Trên hoặc Trái)
-            if (Math.random() < 0.5) {
-                this.x = random(0, width);
-                this.y = -50; // Trên cùng
+    class Shockwave {
+        constructor(x, y, maxR) {
+            this.x = x; this.y = y;
+            this.r = 1;
+            this.maxR = maxR;
+            this.alpha = 1;
+            const duration = 40; 
+            this.fadeSpeed = 1 / duration;
+            this.expansionSpeed = maxR / duration;
+        }
+        update() {
+            this.r += this.expansionSpeed;
+            this.alpha -= this.fadeSpeed;
+        }
+        draw(ctx) {
+            if (this.alpha <= 0) return;
+            ctx.strokeStyle = `rgba(255, 255, 255, ${this.alpha})`;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(this.x | 0, this.y | 0, this.r, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+    }
+
+    class Comet {
+        constructor(type) {
+            this.type = type; 
+            this.active = true;
+            this.trail = [];
+            
+            if (type === 'finisher') {
+                this.x = width + 300; this.y = -300;
+                this.targetX = cx; this.targetY = cy;
+                this.speed = 40; 
+                this.size = 15;
+                this.color = 0; 
+            } else if (type === 'hunter') {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.max(width, height) * 0.8;
+                this.x = cx + Math.cos(angle) * dist;
+                this.y = cy + Math.sin(angle) * dist;
+                
+                const randomIdx = Math.floor(Math.random() * CONFIG.PARTICLE_COUNT) * 10;
+                this.targetX = cx + particles[randomIdx+2] + (Math.random()-0.5)*20; 
+                this.targetY = cy + particles[randomIdx+3] + (Math.random()-0.5)*20;
+
+                this.speed = 15 + Math.random() * 10;
+                this.size = 3;
+                this.color = 340; 
             } else {
-                this.x = -50; // Bên trái
-                this.y = random(0, height / 2);
+                this.x = Math.random() * width; this.y = -50;
+                this.targetX = this.x - 500; this.targetY = height + 500;
+                this.speed = 5 + Math.random() * 5;
+                this.size = 1.5;
+                this.color = Math.random() * 60 + 200;
             }
 
-            // Đích đến: Góc dưới phải (tạo cảm giác mưa sao băng chéo)
-            this.speed = random(COMET_SPEED_MIN, COMET_SPEED_MAX);
-            this.angle = random(Math.PI / 6, Math.PI / 3); // Góc bay chéo (30-60 độ)
-            
-            // Màu sắc Neon huyền ảo (Cyan, Purple, Blue, Pink)
-            const hues = [180, 280, 220, 320]; 
-            this.hue = hues[Math.floor(random(0, hues.length))];
-            
-            // Mảng lưu vết lịch sử để vẽ đuôi
-            this.trail = [];
+            const angle = Math.atan2(this.targetY - this.y, this.targetX - this.x);
+            this.vx = Math.cos(angle) * this.speed;
+            this.vy = Math.sin(angle) * this.speed;
         }
 
         update() {
-            // Lưu vị trí hiện tại vào lịch sử
-            this.trail.push({ x: this.x, y: this.y });
-            
-            // Giới hạn độ dài đuôi
-            if (this.trail.length > TRAIL_LENGTH) {
-                this.trail.shift(); // Xóa điểm cũ nhất
-            }
+            if (!this.active) return;
+            this.trail.push({x: this.x, y: this.y});
+            if (this.trail.length > 20) this.trail.shift();
 
-            // Di chuyển
-            this.x += Math.cos(this.angle) * this.speed;
-            this.y += Math.sin(this.angle) * this.speed;
+            this.x += this.vx;
+            this.y += this.vy;
 
-            // Nếu bay ra khỏi màn hình -> Reset lại từ đầu
-            if (this.x > width + 500 || this.y > height + 500) {
-                this.reset();
+            if (this.type !== 'ambient') {
+                const dist = Math.hypot(this.x - this.targetX, this.y - this.targetY);
+                if (dist < this.speed) {
+                    this.explode();
+                }
+            } else if (this.y > height + 50) {
+                this.active = false;
             }
         }
 
-        draw() {
-            // --- KỸ THUẬT VẼ ĐUÔI MỊN (GRADIENT TRAIL) ---
-            if (this.trail.length < 2) return;
+        explode() {
+            this.active = false;
+            if (this.type === 'hunter') {
+                STATE.cometsActive = false;
+                STATE.isStormy = true; // START RAIN
 
-            // 1. Vẽ cái đuôi Neon
-            ctx.beginPath();
-            // Nối các điểm trong lịch sử lại
-            ctx.moveTo(this.trail[0].x, this.trail[0].y);
-            for (let i = 1; i < this.trail.length; i++) {
-                // Kỹ thuật nối đường cong nhẹ để đuôi trông mềm mại
-                // (Dù bay thẳng nhưng curve giúp khử răng cưa tốt hơn lineTo)
-                let point = this.trail[i];
-                ctx.lineTo(point.x, point.y);
+                applyDamage(this.x, this.y, CONFIG.IMPACT_RADIUS, CONFIG.IMPACT_FORCE);
+                
+                // TRIGGER LIGHTNING ON EVERY HIT
+                triggerLightning();
+
+            } else if (this.type === 'finisher') {
+                triggerImpact();
+                triggerLightning(); // Big lightning for finisher too
+                if (CONFIG.SHOW_SHOCKWAVES) shockwaves.push(new Shockwave(this.x, this.y, CONFIG.SHOCKWAVE_VISUAL_BIG));
             }
-            
-            // Tạo hiệu ứng đuôi mờ dần về phía sau
-            // Gradient đi từ đuôi (trong suốt) -> đầu (sáng rõ)
-            let gradient = ctx.createLinearGradient(
-                this.trail[0].x, this.trail[0].y, 
-                this.x, this.y
-            );
-            gradient.addColorStop(0, `hsla(${this.hue}, 100%, 50%, 0)`);
-            gradient.addColorStop(1, `hsla(${this.hue}, 100%, 70%, 0.8)`);
+        }
 
-            // Áp dụng ShadowBlur cho đuôi (Glow nhẹ)
-            ctx.shadowBlur = 10;
-            ctx.shadowColor = `hsl(${this.hue}, 100%, 50%)`;
+        draw(ctx) {
+            if (!this.active || this.trail.length < 2) return;
             
-            ctx.strokeStyle = gradient;
-            ctx.lineWidth = 2;
-            ctx.lineCap = 'round';
-            ctx.stroke();
-
-            // 2. Vẽ cái đầu (Nucleus) - Sáng nhất
             ctx.beginPath();
-            ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+            ctx.moveTo(this.trail[0].x | 0, this.trail[0].y | 0);
+            for(let p of this.trail) ctx.lineTo(p.x | 0, p.y | 0);
             
-            // Đầu phát sáng mạnh mẽ
-            ctx.shadowBlur = 20;
-            ctx.shadowColor = `hsl(${this.hue}, 100%, 60%)`;
-            ctx.fillStyle = '#fff'; // Tâm trắng
-            ctx.fill();
-
-            // Reset shadow
+            const grad = ctx.createLinearGradient(this.trail[0].x, this.trail[0].y, this.x, this.y);
+            const sat = (this.type === 'finisher') ? '0%' : '100%';
+            const light = (this.type === 'finisher') ? '100%' : '50%';
+            
+            grad.addColorStop(0, `hsla(${this.color}, ${sat}, ${light}, 0)`);
+            grad.addColorStop(1, `hsla(${this.color}, ${sat}, 80%, 1)`);
+            
+            ctx.strokeStyle = grad;
+            ctx.lineWidth = this.size;
+            ctx.lineCap = 'round';
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = `hsla(${this.color}, ${sat}, 50%, 1)`;
+            ctx.stroke();
             ctx.shadowBlur = 0;
         }
     }
 
-    // --- KHỞI TẠO ---
-    let stars = [];
-    for (let i = 0; i < STAR_COUNT; i++) {
-        stars.push(new Star());
-    }
+    // --- PHYSICS LOGIC ---
 
-    let comets = [];
-    for (let i = 0; i < COMET_COUNT; i++) {
-        comets.push(new Comet());
-        // Random vị trí ban đầu cho trail có sẵn (đỡ bị giật lúc start)
-        for(let j=0; j<TRAIL_LENGTH; j++) {
-            comets[i].x += Math.cos(comets[i].angle) * comets[i].speed;
-            comets[i].y += Math.sin(comets[i].angle) * comets[i].speed;
-            comets[i].trail.push({x: comets[i].x, y: comets[i].y});
+    function applyDamage(impactX, impactY, radius, force) {
+        for (let i = 0; i < CONFIG.PARTICLE_COUNT; i++) {
+            const idx = i * 10;
+            const px = particles[idx];
+            const py = particles[idx + 1];
+            const dist = Math.hypot(px - impactX, py - impactY);
+
+            if (dist < radius) {
+                particles[idx + 8] = 1; // Scarred
+                const angle = Math.atan2(py - impactY, px - impactX);
+                const pForce = force * (1 - dist/radius);
+                
+                particles[idx + 6] += Math.cos(angle) * pForce;
+                particles[idx + 7] += Math.sin(angle) * pForce;
+            }
         }
     }
 
-    function animate() {
-        // Xóa sạch màn hình mỗi khung (Clear Canvas)
-        // Vì sao chổi tự vẽ đuôi (trail) của nó rồi, nên ta không cần mẹo mờ màn hình nữa
-        // Điều này giúp các ngôi sao nền luôn sắc nét, không bị nhòe.
-        ctx.clearRect(0, 0, width, height);
+    function triggerImpact() {
+        STATE.phase = 2; // Dying
+        STATE.shake = 50 * CONFIG.SHAKE_MULTIPLIER;
+        STATE.flash = 1.0;
+        
+        for (let i = 0; i < CONFIG.PARTICLE_COUNT; i++) {
+            const idx = i * 10;
+            const dx = particles[idx] - cx;
+            const dy = particles[idx+1] - cy;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            const force = CONFIG.FINISHER_FORCE / (dist + 10); 
+            const angle = Math.atan2(dy, dx);
+            
+            particles[idx + 6] += Math.cos(angle) * force;
+            particles[idx + 7] += Math.sin(angle) * force;
+            particles[idx + 8] = 2; // Dead/White
+        }
 
-        // 1. Vẽ nền sao
-        stars.forEach(star => {
-            star.update();
-            star.draw();
-        });
-
-        // 2. Vẽ sao chổi
-        // Dùng chế độ 'lighter' để đuôi sao chổi rực rỡ khi bay qua nhau
-        ctx.globalCompositeOperation = 'lighter';
-        comets.forEach(comet => {
-            comet.update();
-            comet.draw();
-        });
-        ctx.globalCompositeOperation = 'source-over';
-
-        requestAnimationFrame(animate);
+        setTimeout(triggerShatter, 2500);
     }
 
-    animate();
+    function triggerShatter() {
+        showMessage("Gone with the wind.");
+        STATE.phase = 3; // Shattered
+        STATE.shake = 10;
+        
+        for (let i = 0; i < CONFIG.PARTICLE_COUNT; i++) {
+            const idx = i * 10;
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 20 + 5;
+            particles[idx + 6] = Math.cos(angle) * speed; 
+            particles[idx + 7] = Math.sin(angle) * speed; 
+        }
+    }
+
+    function showMessage(msg) {
+        textOverlay.style.opacity = 0;
+        setTimeout(() => {
+            textOverlay.innerHTML = msg;
+            textOverlay.style.opacity = 1;
+        }, 500);
+    }
+
+    // --- UTILS FOR LIGHTNING ---
+    function generateLightningBolt() {
+        let x = Math.random() * width;
+        let y = 0;
+        let points = [{x, y}];
+        
+        while (y < height) {
+            x += (Math.random() - 0.5) * 100;
+            y += Math.random() * 100;
+            points.push({x, y});
+        }
+        return points;
+    }
+
+    function triggerLightning() {
+        lightningOpacity = 0.8 + Math.random() * 0.2; // Bright flash
+        STATE.shake += 10;
+        lightningBolt = generateLightningBolt();
+    }
+
+    function startCinematic() {
+        initHeart();
+        for(let i=0; i<300; i++) stars.push(new Star());
+        for(let i=0; i<400; i++) rain.push(new RainDrop());
+
+        setTimeout(() => showMessage("It was beautiful..."), 1000);
+        setTimeout(() => {
+            let count = 0;
+            const barrageInterval = setInterval(() => {
+                if (count === 0) showMessage("...until the scars began to form.");
+                comets.push(new Comet('hunter'));
+                count++;
+                if (count >= CONFIG.BARRAGE_COUNT) clearInterval(barrageInterval);
+            }, CONFIG.BARRAGE_INTERVAL);
+        }, CONFIG.BARRAGE_START_DELAY);
+
+        setInterval(() => { 
+            if (Math.random() < 0.3 && STATE.cometsActive) comets.push(new Comet('ambient')); 
+        }, 500);
+
+        setTimeout(() => { comets.push(new Comet('finisher')); }, CONFIG.FINISHER_DELAY);
+    }
+
+    startCinematic();
+
+    // --- MAIN LOOP ---
+    let time = 0;
+    
+    function loop() {
+        // --- BACKGROUND ---
+        ctx.fillStyle = 'rgba(5, 5, 5, 0.25)'; 
+        ctx.fillRect(0, 0, width, height);
+
+        // --- LIGHTNING RENDER ---
+        if (lightningOpacity > 0) {
+            // Background flash
+            ctx.fillStyle = `rgba(255, 255, 255, ${lightningOpacity * 0.3})`;
+            ctx.fillRect(0, 0, width, height);
+            
+            // Bolt
+            if (lightningBolt) {
+                ctx.beginPath();
+                ctx.moveTo(lightningBolt[0].x, lightningBolt[0].y);
+                for(let i=1; i<lightningBolt.length; i++) {
+                    ctx.lineTo(lightningBolt[i].x, lightningBolt[i].y);
+                }
+                ctx.strokeStyle = `rgba(255, 255, 255, ${lightningOpacity})`;
+                ctx.lineWidth = 3;
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = "white";
+                ctx.stroke();
+                ctx.shadowBlur = 0; 
+            }
+            lightningOpacity *= 0.85; 
+        } else {
+            lightningBolt = null;
+        }
+        
+        ctx.save();
+        if (STATE.shake > 0) {
+            ctx.translate((Math.random()-0.5)*STATE.shake, (Math.random()-0.5)*STATE.shake);
+            STATE.shake *= 0.9;
+        }
+
+        // Draw Stars (only if NOT stormy)
+        if (!STATE.isStormy) {
+            stars.forEach(s => { s.update(); s.draw(ctx); });
+        }
+        
+        ctx.globalCompositeOperation = 'lighter';
+        
+        // --- RAIN ---
+        if (STATE.isStormy) {
+            rain.forEach(r => {
+                r.update();
+                r.draw(ctx);
+            });
+        }
+
+        // Draw Shockwaves
+        for (let i = shockwaves.length - 1; i >= 0; i--) {
+            let sw = shockwaves[i];
+            sw.update(); sw.draw(ctx);
+            if (sw.alpha <= 0) shockwaves.splice(i, 1);
+        }
+
+        // Draw Comets
+        for (let i = comets.length - 1; i >= 0; i--) {
+            let c = comets[i];
+            c.update(); c.draw(ctx);
+            if (!c.active) comets.splice(i, 1);
+        }
+
+        // --- PARTICLE LOGIC ---
+        let beatScale = 1;
+        if (STATE.phase === 1) {
+            time += 0.015;
+            let cycle = time % 1.2; 
+            let beat1 = Math.exp(-Math.pow(cycle - 0.2, 2) * 50);
+            let beat2 = Math.exp(-Math.pow(cycle - 0.5, 2) * 50);
+            let breathing = Math.sin(time * 3) * 0.05; 
+            beatScale = 0.9 + breathing + (beat1 * 0.45 + beat2 * 0.4);
+        }
+
+        for (let i = 0; i < CONFIG.PARTICLE_COUNT; i++) {
+            const idx = i * 10;
+            
+            let x = particles[idx];
+            let y = particles[idx + 1];
+            
+            // Culling
+            if (STATE.phase === 3 && (x < -50 || x > width + 50 || y < -50 || y > height + 50)) {
+                continue;
+            }
+
+            let vx = particles[idx + 6];
+            let vy = particles[idx + 7];
+            const damageLevel = particles[idx + 8]; 
+            
+            if (STATE.phase === 3) {
+                // SHATTER (White)
+                x += vx; y += vy;
+                vx *= 0.99; vy *= 0.99;
+                const speed = Math.abs(vx) + Math.abs(vy);
+                const alpha = Math.min(1, speed / 5); 
+                if (alpha > 0.01) {
+                    ctx.globalAlpha = alpha;
+                    ctx.drawImage(imgWhite, x | 0, y | 0, 4, 4);
+                }
+            } else if (STATE.phase === 2) {
+                // DYING (White)
+                x += vx; y += vy;
+                vx *= 0.92; vy *= 0.92;
+                ctx.globalAlpha = 1;
+                ctx.drawImage(imgWhite, x | 0, y | 0, 2, 2);
+            } else {
+                // ALIVE
+                if (damageLevel === 1) {
+                    // Scarred (Red, detached)
+                    x += vx; y += vy;
+                    vx *= 0.9; vy *= 0.9; vy += 0.05; 
+                    ctx.globalAlpha = 1;
+                    ctx.drawImage(imgLive, x | 0, y | 0, 2, 2);
+                } else {
+                    // Healthy (Red, beating)
+                    const baseX = particles[idx + 2];
+                    const baseY = particles[idx + 3];
+                    const friction = particles[idx + 4];
+                    const phase = particles[idx + 5];
+                    const driftX = Math.cos(time + phase) * 3; 
+                    const driftY = Math.sin(time * 0.8 + phase) * 3;
+                    const targetX = cx + (baseX + driftX) * beatScale;
+                    const targetY = cy + (baseY + driftY) * beatScale;
+
+                    x += (targetX - x) * friction;
+                    y += (targetY - y) * friction;
+                    
+                    const sparkle = 1 + 0.4 * Math.sin(time * 3 + phase); 
+                    const baseSize = particles[idx + 9];
+                    const size = baseSize * sparkle;
+
+                    ctx.globalAlpha = 1;
+                    ctx.drawImage(imgLive, x | 0, y | 0, size | 0, size | 0);
+                }
+            }
+            
+            particles[idx] = x;
+            particles[idx + 1] = y;
+            particles[idx + 6] = vx;
+            particles[idx + 7] = vy;
+        }
+
+        ctx.restore();
+
+        // Simple white overlay for flash
+        if (STATE.flash > 0.01) {
+            ctx.fillStyle = `rgba(255, 255, 255, ${STATE.flash})`;
+            ctx.fillRect(0, 0, width, height);
+            STATE.flash *= 0.9;
+        }
+
+        requestAnimationFrame(loop);
+    }
+
+    loop();
 
 </script>
 
